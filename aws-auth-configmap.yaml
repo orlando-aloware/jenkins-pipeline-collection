@@ -1,0 +1,114 @@
+apiVersion: v1
+data:
+  mapRoles: |
+    - groups:
+      - system:bootstrappers
+      - system:nodes
+      rolearn: arn:aws:iam::333629833033:role/aloware-dev-uswest2-iam-grouprole-cr-01
+      username: system:node:{{EC2PrivateDNSName}}
+  mapUsers: |
+    - userarn: arn:aws:iam::333629833033:user/sohrab
+      username: sohrab
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/jenkins-cicd
+      username: jenkins-cicd
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/amir@aloware.com
+      username: amir@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito@aloware.com
+      username: tito@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/heghine@aloware.com
+      username: heghine@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/mde-access-manager
+      username: mde-access-manager
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/jefferson@aloware.com
+      username: jefferson@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/volodymyr@aloware.com
+      username: volodymyr@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev+001@aloware.com
+      username: tito+dev+001@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev+001@aloware.com
+      username: tito+dev+001@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/paulo@aloware.com
+      username: paulo@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/fernando@aloware.com
+      username: fernando@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/yhael@aloware.com
+      username: yhael@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/reza@aloware.com
+      username: reza@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev@aloware.com
+      username: tito+dev@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev@aloware.com
+      username: tito+dev@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev@aloware.com
+      username: tito+dev@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev+2@aloware.com
+      username: tito+dev+2@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/henrique@aloware.com
+      username: henrique@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/adriano@aloware.com
+      username: adriano@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/jego@aloware.com
+      username: jego@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/marcelo@aloware.com
+      username: marcelo@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/miroslav@aloware.com
+      username: miroslav@aloware.com
+      groups:
+        - system:masters
+    - userarn: arn:aws:iam::333629833033:user/tito+dev+2@aloware.com
+      username: tito+dev+2@aloware.com
+      groups:
+        - system:masters
+kind: ConfigMap
+metadata:
+  creationTimestamp: "2023-12-29T21:39:25Z"
+  labels:
+    k8slens-edit-resource-version: v1
+  name: aws-auth
+  namespace: kube-system
+  resourceVersion: "308420233"
+  uid: 969af3f7-3479-4784-9a8d-2932fa07d3cb
