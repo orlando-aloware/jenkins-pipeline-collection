@@ -179,4 +179,4 @@ jobs:
       #       echo ""
       #       echo "=== Remaining Old Builds (>60 days) ==="
       #       sudo find /var/lib/jenkins/jobs -type d -path '*/builds/*' ! -path '*/builds/*/*' -mtime +60 2>/dev/null | wc -l
-EOF
+# EOF
