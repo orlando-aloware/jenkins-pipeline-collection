@@ -79,7 +79,14 @@ jobs:
           sleep 2
           
           # Run find script and capture output
-           ssh -i "$HOME/.ssh/gha_eic" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+           ssh -i "$HOME/.ssh/gha_eic" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -o ConnectTimeout=15 \
+            -o TCPKeepAlive=yes \
             ec2-user@52.34.96.115 \
             "yes yes | sudo /tmp/largest_dirs_and_files.sh" 2>&1 || {
               echo "⚠️ Cleanup script encountered an issue. Checking logs..."
