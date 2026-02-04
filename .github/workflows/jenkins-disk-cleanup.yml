@@ -37,9 +37,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -N "" -f ~/.ssh/gha_eic
+          ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/gha_eic
           chmod 600 ~/.ssh/gha_eic
-          ls -l ~/.ssh
+          ssh-keygen -lf ~/.ssh/gha_eic.pub
 
       - name: Upload large directories and files find script
         run: |
@@ -50,7 +50,7 @@ jobs:
             --instance-id "$INSTANCE_ID" \
             --instance-os-user ec2-user \
             --region us-west-2 \
-            --ssh-public-key "$(cat ~/.ssh/gha_eic.pub)" || {
+            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub" || {
               echo "Failed to rotate SSH key"
               exit 1
             }
@@ -71,7 +71,7 @@ jobs:
             --instance-id i-078f93bc56d3d9cb4 \
             --instance-os-user ec2-user \
             --region us-west-2 \
-            --ssh-public-key "$(cat ~/.ssh/gha_eic.pub)"
+            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
           
           sleep 2
           
