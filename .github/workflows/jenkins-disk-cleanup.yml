@@ -1,0 +1,182 @@
+name: Jenkins Disk Cleanup
+
+on:
+  # schedule:
+    # 8am and 2pm UTC on weekdays (Monday-Friday)
+    # - cron: '0 8 * * 1-5'
+    # - cron: '0 14 * * 1-5'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: Run Jenkins Disk Cleanup
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-session-name: GitHubActions-JenkinsCleanup
+      
+      - name: Check AWS credentials
+        run: |
+          echo "Testing AWS credentials..."
+          aws sts get-caller-identity
+
+      - name: Upload large directories and files find script
+        run: |
+          INSTANCE_ID="i-078f93bc56d3d9cb4"
+          
+          echo "Rotating SSH key for EC2 Instance Connect..."
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" \
+            --instance-os-user ec2-user \
+            --region us-west-2 \
+            --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)" || {
+              echo "Failed to rotate SSH key"
+              exit 1
+            }
+          
+          sleep 2
+          
+          echo "Uploading large directories and files find script..."
+          cat largest_dirs_and_files.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+             ec2-user@52.34.96.115 \
+             "cat > /tmp/largest_dirs_and_files.sh && chmod +x /tmp/largest_dirs_and_files.sh"
+
+      - name: Run large directories and files find script
+        run: |
+          echo "Finding large directories and files in Jenkins..."
+          echo "====================================="
+          
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id i-078f93bc56d3d9cb4 \
+            --instance-os-user ec2-user \
+            --region us-west-2 \
+            --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)"
+          
+          sleep 2
+          
+          # Run find script and capture output
+           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            ec2-user@52.34.96.115 \
+            "yes yes | sudo /tmp/largest_dirs_and_files.sh" 2>&1 || {
+              echo "⚠️ Cleanup script encountered an issue. Checking logs..."
+              exit 1
+            }
+
+      # - name: Upload cleanup dryrun script to EC2
+      #   run: |
+      #     INSTANCE_ID="i-078f93bc56d3d9cb4"
+          
+      #     echo "Rotating SSH key for EC2 Instance Connect..."
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id "$INSTANCE_ID" \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)" || {
+      #         echo "Failed to rotate SSH key"
+      #         exit 1
+      #       }
+          
+      #     sleep 2
+          
+      #     echo "Uploading dryrun cleanup script..."
+      #     cat jenkins_disk_cleanup_dryrun.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      #       ec2-user@52.34.96.115
+
+      # - name: Run dryrun cleanup script
+      #   run: |
+      #     echo "Starting Jenkins disk cleanup dryrun..."
+      #     echo "====================================="
+          
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id i-078f93bc56d3d9cb4 \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)"
+          
+      #     sleep 2
+          
+      #     # Run dryrun cleanup and capture output
+      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      #       ec2-user@52.34.96.115
+      
+      # - name: Upload cleanup script to EC2
+      #   run: |
+      #     INSTANCE_ID="i-078f93bc56d3d9cb4"
+          
+      #     echo "Rotating SSH key for EC2 Instance Connect..."
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id "$INSTANCE_ID" \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)" || {
+      #         echo "Failed to rotate SSH key"
+      #         exit 1
+      #       }
+          
+      #     sleep 2
+          
+      #     echo "Uploading cleanup script..."
+      #     cat jenkins_disk_cleanup.sh | ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      #       ec2-user@52.34.96.115 \
+      #       "cat > /tmp/cleanup.sh && chmod +x /tmp/cleanup.sh"
+      
+      # - name: Run cleanup script
+      #   run: |
+      #     echo "Starting Jenkins disk cleanup..."
+      #     echo "====================================="
+          
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id i-078f93bc56d3d9cb4 \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)"
+          
+      #     sleep 2
+          
+      #     # Run cleanup and capture output
+      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      #       ec2-user@52.34.96.115 \
+      #       "yes yes | sudo /tmp/cleanup.sh" 2>&1 || {
+      #         echo "⚠️ Cleanup script encountered an issue. Checking logs..."
+      #         exit 1
+      #       }
+      
+      # - name: Verify disk space
+      #   if: always()
+      #   run: |
+      #     echo ""
+      #     echo "====================================="
+      #     echo "Post-Cleanup Verification"
+      #     echo "====================================="
+          
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id i-078f93bc56d3d9cb4 \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)"
+          
+      #     sleep 2
+          
+      #     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      #       ec2-user@52.34.96.115 << 'EOF'
+      #       echo "=== Disk Usage ==="
+      #       df -h / | grep nvme
+      #       echo ""
+      #       echo "=== Jenkins Jobs Directory Size ==="
+      #       du -sh /var/lib/jenkins/jobs
+      #       echo ""
+      #       echo "=== Remaining Old Builds (>60 days) ==="
+      #       sudo find /var/lib/jenkins/jobs -type d -path '*/builds/*' ! -path '*/builds/*/*' -mtime +60 2>/dev/null | wc -l
+# EOF
