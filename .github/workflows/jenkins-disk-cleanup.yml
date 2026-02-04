@@ -32,6 +32,15 @@ jobs:
           echo "Testing AWS credentials..."
           aws sts get-caller-identity
 
+      - name: Generate ephemeral SSH key for EC2 Instance Connect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -N "" -f ~/.ssh/gha_eic
+          chmod 600 ~/.ssh/gha_eic
+          ls -l ~/.ssh
+
       - name: Upload large directories and files find script
         run: |
           INSTANCE_ID="i-078f93bc56d3d9cb4"
@@ -41,7 +50,7 @@ jobs:
             --instance-id "$INSTANCE_ID" \
             --instance-os-user ec2-user \
             --region us-west-2 \
-            --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)" || {
+            --ssh-public-key "$(cat ~/.ssh/gha_eic.pub)" || {
               echo "Failed to rotate SSH key"
               exit 1
             }
@@ -62,7 +71,7 @@ jobs:
             --instance-id i-078f93bc56d3d9cb4 \
             --instance-os-user ec2-user \
             --region us-west-2 \
-            --ssh-public-key "$(cat ~/.ssh/id_rsa.pub)"
+            --ssh-public-key "$(cat ~/.ssh/gha_eic.pub)"
           
           sleep 2
           
