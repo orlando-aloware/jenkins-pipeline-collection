@@ -62,8 +62,8 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             ec2-user@52.34.96.115 \
-            "cat > /tmp/largest_dirs_and_files.sh && chmod +x /tmp/largest_dirs_and_files.sh" \
-            < largest_dirs_and_files.sh
+            "cat > /tmp/jenkins_analysys && chmod +x /tmp/jenkins_analysys" \
+            < jenkins_analysys
 
       - name: Run large directories and files find script
         run: |
@@ -88,7 +88,7 @@ jobs:
             -o ConnectTimeout=15 \
             -o TCPKeepAlive=yes \
             ec2-user@52.34.96.115 \
-            "yes yes | sudo /tmp/largest_dirs_and_files.sh" 2>&1 || {
+            "yes yes | sudo /tmp/jenkins_analysys" 2>&1 || {
               echo "⚠️ Cleanup script encountered an issue. Checking logs..."
               exit 1
             }
