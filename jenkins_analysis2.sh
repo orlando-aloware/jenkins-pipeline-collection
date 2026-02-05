@@ -50,18 +50,6 @@ else
   echo "Emergency mode: disabled"
 fi
 
-echo 
-echo "Top 20 largest directories from / (depth=1, same filesystem):"
-top_dirs 1 20 /
-
-echo 
-echo "Top 20 largest directories in /var (depth=2):"
-top_dirs 2 20 /var
-
-echo 
-echo "Top 20 largest directories in ${jenkins_home} (depth=2):"
-top_dirs 2 20 "$jenkins_home"
-
 # Targeted Jenkins hotspots (cheap + actionable)
 echo 
 echo "Sizes of key Jenkins directories:"
@@ -88,44 +76,16 @@ sudo find "$jenkins_home/jobs" -type d -name builds -prune -exec du -x -B1 -s {}
       printf "%s\t%s\n" "$(numfmt --to=iec --suffix=B "$bytes")" "$path"
     done
 
-# Replace the O(N^2) "most files" logic with a single traversal (depth=2 children count).
-echo 
-echo "Top 20 Jenkins subdirectories with most immediate children (depth=1):"
-sudo find "$jenkins_home" -mindepth 2 -maxdepth 2 -printf '%h\n' 2>/dev/null \
-  | sort | uniq -c | sort -nr | head -20 \
-  | awk '{count=$1; $1=""; sub(/^ /,""); printf "%8d  %s\n", count, $0}'
-
-# Full-root large files scan is expensive; keep it, but do it efficiently and optionally gate it.
-echo 
-echo "Top 50 largest files on / (same filesystem, >=100MB apparent size):"
-top_files 50 $((100*1024*1024))
 
 echo 
 echo "Old large files in ${jenkins_home} (mtime>60d, >=100MB):"
-sudo find "$jenkins_home" -type f -mtime +60 -size +100M -printf '%TY-%Tm-%Td %TH:%TM\t%10s\t%p\n' 2>/dev/null \
-  | sort -nr -k2,2 \
-  | head -50 \
-  | awk '{printf "%s\t%s\t%s\n",$1" "$2,(sprintf("%s", $3)),$4}'
-
-echo 
-echo "Large log files in /var/log (>=50MB):"
-sudo find /var/log -xdev -type f -size +50M -printf '%s\t%p\n' 2>/dev/null \
-  | sort -nr | head -50 \
-  | while IFS=$'\t' read -r bytes path; do
-      printf "%s\t%s\n" "$(numfmt --to=iec --suffix=B "$bytes")" "$path"
-    done
-
-# Docker info can be slow; only run if docker exists (and optionally if usage is high).
-if exists docker; then
-  echo 
-  echo "Docker disk usage:"
-  if [ "$USAGE" -ge "$THRESHOLD" ]; then
-    sudo docker system df -v
-  else
-    sudo docker system df
-  fi
-fi
-
-echo 
-echo "Current disk usage summary:"
-df -h "$rootfs"
+sudo find "$jenkins_home" -type f -mtime +60 -size +100M \
+  -printf '%TY-%Tm-%Td %TH:%TM\t%s\t%p\n' 2>/dev/null \
+| sort -nr -k2,2 \
+| head -50 \
+| awk -F'\t' '{
+    cmd = "numfmt --to=iec --suffix=B " $2
+    cmd | getline hsize
+    close(cmd)
+    printf "%s\t%s\t%s\n", $1, hsize, $3
+}'

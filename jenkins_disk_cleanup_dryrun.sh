@@ -49,6 +49,11 @@ get_disk_usage() {
     df -h / | tail -1 | awk '{print $5}'
 }
 
+# Function to get disk usage as integer percent (no % sign)
+get_disk_usage_pct() {
+    df -P / | awk 'NR==2 {gsub(/%/, "", $5); print $5}'
+}
+
 # Function to calculate directory size
 get_dir_size() {
     du -sh "$1" 2>/dev/null | cut -f1 || echo "0B"
@@ -59,10 +64,27 @@ get_dir_size_bytes() {
     du -sb "$1" 2>/dev/null | cut -f1 || echo "0"
 }
 
+# Function to format bytes to human-readable (best effort)
+format_bytes() {
+    local bytes="${1:-0}"
+    if command -v numfmt >/dev/null 2>&1; then
+        numfmt --to=iec --suffix=B "$bytes"
+    else
+        echo "${bytes}B"
+    fi
+}
+
 # Function to count items
 count_items() {
     find "$1" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d ' '
 }
+
+JENKINS_HOME="/var/lib/jenkins"
+DISK_USAGE_THRESHOLD_PCT="${DISK_USAGE_THRESHOLD_PCT:-30}"
+TOP_BUILDS_TOTAL_BYTES=0
+TOP_BUILDS_COUNT=0
+OLD_LARGE_TOTAL_BYTES=0
+OLD_LARGE_COUNT=0
 
 ################################################################################
 # Pre-flight checks
@@ -75,9 +97,29 @@ echo ""
 log_warning "This is a READ-ONLY analysis. Nothing will be deleted."
 echo ""
 
-log_info "Current disk usage: $(get_disk_usage)"
+DISK_USAGE_RAW="$(get_disk_usage || true)"
+DISK_USAGE_PCT="$(get_disk_usage_pct 2>/dev/null || echo "0")"
+if [[ -z "${DISK_USAGE_PCT}" ]]; then DISK_USAGE_PCT="0"; fi
+
+log_info "Current disk usage: ${DISK_USAGE_RAW} (threshold: ${DISK_USAGE_THRESHOLD_PCT}%)"
 log_info "Current date/time: $(date)"
 echo ""
+
+# Machine-readable outputs (useful for GitHub Actions parsing)
+if [[ "${DISK_USAGE_PCT}" -ge "${DISK_USAGE_THRESHOLD_PCT}" ]]; then
+    DISK_CLEANUP_SHOULD_RUN="true"
+else
+    DISK_CLEANUP_SHOULD_RUN="false"
+fi
+echo "DISK_USAGE_PCT=${DISK_USAGE_PCT}"
+echo "DISK_USAGE_THRESHOLD_PCT=${DISK_USAGE_THRESHOLD_PCT}"
+echo "DISK_CLEANUP_SHOULD_RUN=${DISK_CLEANUP_SHOULD_RUN}"
+echo ""
+
+if [[ "${DISK_CLEANUP_SHOULD_RUN}" != "true" ]]; then
+    log_success "Disk usage is below threshold; skipping remaining dry-run steps."
+    exit 0
+fi
 
 # Check if running as root or with sudo (needed for journal access)
 if [[ $EUID -ne 0 ]]; then
@@ -128,7 +170,7 @@ echo ""
 ################################################################################
 
 log_info "═══════════════════════════════════════════════════════════════════"
-log_info "STEP 1/5: Analyzing system journal logs"
+log_info "STEP 1/7: Analyzing system journal logs"
 log_info "═══════════════════════════════════════════════════════════════════"
 
 if [[ $EUID -eq 0 ]]; then
@@ -158,7 +200,7 @@ echo ""
 ################################################################################
 
 log_info "═══════════════════════════════════════════════════════════════════"
-log_info "STEP 2/5: Analyzing Jenkins build histories (older than 60 days)"
+log_info "STEP 2/7: Analyzing Jenkins build histories (older than 60 days)"
 log_info "═══════════════════════════════════════════════════════════════════"
 
 JENKINS_JOBS_DIR="/var/lib/jenkins/jobs"
@@ -212,11 +254,78 @@ fi
 echo ""
 
 ################################################################################
-# Step 3: Analyze PR workspaces
+# Step 3: Analyze largest Jenkins builds directories
+################################################################################
+
+log_info "==================================================================="
+log_info "STEP 3/7: Top 50 Jenkins builds directories by size"
+log_info "==================================================================="
+
+if [[ ! -d "$JENKINS_JOBS_DIR" ]]; then
+    log_warning "Jenkins jobs directory not found: $JENKINS_JOBS_DIR"
+else
+    TOP_BUILDS_LIST=$(find "$JENKINS_JOBS_DIR" -type d -name builds -prune -exec du -x -B1 -s {} + 2>/dev/null \
+        | sort -nr | head -50)
+    TOP_BUILDS_COUNT=$(printf '%s' "$TOP_BUILDS_LIST" | awk 'END {print NR+0}')
+
+    if [[ $TOP_BUILDS_COUNT -gt 0 ]]; then
+        echo ""
+        echo "  Largest builds directories (size  path):"
+        printf '%s' "$TOP_BUILDS_LIST" | while IFS=$'\t' read -r bytes path; do
+            printf "    - %s\t%s\n" "$(format_bytes "$bytes")" "$path"
+        done
+
+        TOP_BUILDS_TOTAL_BYTES=$(printf '%s' "$TOP_BUILDS_LIST" | awk '{sum+=$1} END {print sum+0}')
+        log_plan "Top 50 builds directories account for $(format_bytes "$TOP_BUILDS_TOTAL_BYTES")"
+        log_plan "Estimated savings: $(format_bytes "$TOP_BUILDS_TOTAL_BYTES") (if pruned)"
+        log_warning "Informational only - may overlap with old-build pruning"
+    else
+        log_success "No builds directories found"
+    fi
+fi
+
+echo ""
+
+################################################################################
+# Step 4: Analyze old large files in Jenkins
+################################################################################
+
+log_info "==================================================================="
+log_info "STEP 4/7: Old large files in Jenkins (mtime > 60d, size >= 100MB)"
+log_info "==================================================================="
+
+if [[ ! -d "$JENKINS_HOME" ]]; then
+    log_warning "Jenkins home directory not found: $JENKINS_HOME"
+else
+    OLD_LARGE_LIST=$(find "$JENKINS_HOME" -type f -mtime +60 -size +100M \
+        -printf '%s\t%TY-%Tm-%Td %TH:%TM\t%p\n' 2>/dev/null \
+        | sort -nr -k1,1 | head -50)
+    OLD_LARGE_COUNT=$(printf '%s' "$OLD_LARGE_LIST" | awk 'END {print NR+0}')
+
+    if [[ $OLD_LARGE_COUNT -gt 0 ]]; then
+        echo ""
+        echo "  Old large files (date  size  path):"
+        printf '%s' "$OLD_LARGE_LIST" | while IFS=$'\t' read -r bytes mtime path; do
+            printf "    - %s\t%s\t%s\n" "$mtime" "$(format_bytes "$bytes")" "$path"
+        done
+
+        OLD_LARGE_TOTAL_BYTES=$(printf '%s' "$OLD_LARGE_LIST" | awk -F'\t' '{sum+=$1} END {print sum+0}')
+        log_plan "Found $OLD_LARGE_COUNT old large files"
+        log_plan "Estimated savings: $(format_bytes "$OLD_LARGE_TOTAL_BYTES") (if cleaned)"
+        log_warning "Informational only - review before deleting"
+    else
+        log_success "No old large files found (>=100MB, >60 days)"
+    fi
+fi
+
+echo ""
+
+################################################################################
+# Step 5: Analyze PR workspaces
 ################################################################################
 
 log_info "═══════════════════════════════════════════════════════════════════"
-log_info "STEP 3/5: Analyzing old PR workspaces (older than 7 days)"
+log_info "STEP 5/7: Analyzing old PR workspaces (older than 7 days)"
 log_info "═══════════════════════════════════════════════════════════════════"
 
 JENKINS_WORKSPACE_DIR="/var/lib/jenkins/workspace"
@@ -269,11 +378,11 @@ fi
 echo ""
 
 ################################################################################
-# Step 4: Analyze GitHub SCM probe cache
+# Step 6: Analyze GitHub SCM probe cache
 ################################################################################
 
 log_info "═══════════════════════════════════════════════════════════════════"
-log_info "STEP 4/5: Analyzing GitHub SCM probe cache"
+log_info "STEP 6/7: Analyzing GitHub SCM probe cache"
 log_info "═══════════════════════════════════════════════════════════════════"
 
 GITHUB_CACHE="/var/lib/jenkins/org.jenkinsci.plugins.github_branch_source.GitHubSCMProbe.cache"
@@ -296,11 +405,11 @@ fi
 echo ""
 
 ################################################################################
-# Step 5: Analyze jenkins.zip backup
+# Step 7: Analyze jenkins.zip backup
 ################################################################################
 
 log_info "═══════════════════════════════════════════════════════════════════"
-log_info "STEP 5/5: Analyzing jenkins.zip backup"
+log_info "STEP 7/7: Analyzing jenkins.zip backup"
 log_info "═══════════════════════════════════════════════════════════════════"
 
 JENKINS_ZIP="/var/lib/jenkins.zip"
@@ -352,7 +461,7 @@ log_info "SUMMARY - ESTIMATED SPACE RECOVERY"
 log_info "═══════════════════════════════════════════════════════════════════"
 echo ""
 
-echo "Current disk usage: $(get_disk_usage)"
+echo "Current disk usage: ${DISK_USAGE_RAW:-$(get_disk_usage)}"
 echo ""
 echo "Estimated space to be recovered:"
 echo "  - System journal logs:     ~4GB"
@@ -360,10 +469,13 @@ echo "  - Old Jenkins builds:      20-30GB"
 echo "  - Old PR workspaces:       1-5GB"
 echo "  - GitHub SCM cache:        ~256MB"
 echo "  - jenkins.zip backup:      ~1.3GB (if applicable)"
+echo "  - Top 50 builds dirs:      $(format_bytes "$TOP_BUILDS_TOTAL_BYTES") (informational)"
+echo "  - Old large files (>60d):  $(format_bytes "$OLD_LARGE_TOTAL_BYTES") (informational)"
 echo "  ----------------------------------------"
-echo "  Total estimated savings:   25-40GB"
+echo "  Total estimated savings:   25-40GB (baseline)"
+echo "  Additional potential:      $(format_bytes $((TOP_BUILDS_TOTAL_BYTES + OLD_LARGE_TOTAL_BYTES))) (may overlap)"
 echo ""
-echo "Expected final disk usage:  35-45% (down from current $(get_disk_usage))"
+echo "Expected final disk usage:  35-45% (down from current ${DISK_USAGE_RAW:-$(get_disk_usage)}, baseline only)"
 
 echo ""
 log_success "═══════════════════════════════════════════════════════════════════"

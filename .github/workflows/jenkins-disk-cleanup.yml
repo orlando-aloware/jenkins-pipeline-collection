@@ -41,45 +41,43 @@ jobs:
           chmod 600 ~/.ssh/gha_eic
           ssh-keygen -lf ~/.ssh/gha_eic.pub
 
-      - name: Upload large directories and files find script
+      - name: Upload cleanup dryrun script
+        shell: bash
         run: |
+          set -euo pipefail
           INSTANCE_ID="i-078f93bc56d3d9cb4"
           
-          echo "Rotating SSH key for EC2 Instance Connect..."
           aws ec2-instance-connect send-ssh-public-key \
             --instance-id "$INSTANCE_ID" \
-            --instance-os-user ec2-user \
-            --region us-west-2 \
-            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub" || {
-              echo "Failed to rotate SSH key"
-              exit 1
-            }
-          
-          sleep 5
-          
-          echo "Uploading large directories and files find script..."
-          ssh -i "$HOME/.ssh/gha_eic" \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            ec2-user@52.34.96.115 \
-            "cat > /tmp/jenkins_analysis.sh && chmod +x /tmp/jenkins_analysis.sh" \
-            < jenkins_analysis.sh
-
-      - name: Run large directories and files find script
-        run: |
-          echo "Finding large directories and files in Jenkins..."
-          echo "====================================="
-          
-          aws ec2-instance-connect send-ssh-public-key \
-            --instance-id i-078f93bc56d3d9cb4 \
             --instance-os-user ec2-user \
             --region us-west-2 \
             --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
           
           sleep 2
           
-          # Run find script and capture output
-           ssh -i "$HOME/.ssh/gha_eic" \
+          ssh -i "$HOME/.ssh/gha_eic" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            ec2-user@52.34.96.115 \
+            "cat > /tmp/jenkins_disk_cleanup_dryrun.sh && chmod +x /tmp/jenkins_disk_cleanup_dryrun.sh" \
+            < jenkins_disk_cleanup_dryrun.sh
+
+      - name: Run cleanup dryrun script (sets outputs)
+        id: dryrun
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTANCE_ID="i-078f93bc56d3d9cb4"
+          
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" \
+            --instance-os-user ec2-user \
+            --region us-west-2 \
+            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
+          
+          sleep 2
+          
+          ssh -i "$HOME/.ssh/gha_eic" \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
@@ -88,10 +86,73 @@ jobs:
             -o ConnectTimeout=15 \
             -o TCPKeepAlive=yes \
             ec2-user@52.34.96.115 \
-            "yes yes | sudo /tmp/jenkins_analysis.sh" 2>&1 || {
-              echo "⚠️ Cleanup script encountered an issue. Checking logs..."
-              exit 1
-            }
+            "sudo /tmp/jenkins_disk_cleanup_dryrun.sh" 2>&1 | tee dryrun.log
+          
+          usage_pct="$(sed -n 's/^DISK_USAGE_PCT=//p' dryrun.log | tail -n 1)"
+          should_run="$(sed -n 's/^DISK_CLEANUP_SHOULD_RUN=//p' dryrun.log | tail -n 1)"
+          
+          echo "disk_usage_pct=${usage_pct}" >> "$GITHUB_OUTPUT"
+          echo "disk_cleanup_should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
+      - name: Disk usage decision
+        shell: bash
+        run: |
+          echo "Remote disk usage: ${{ steps.dryrun.outputs.disk_usage_pct }}%"
+          echo "Cleanup should run: ${{ steps.dryrun.outputs.disk_cleanup_should_run }}"
+
+      # - name: Upload large directories and files find script
+      #   if: steps.dryrun.outputs.disk_cleanup_should_run == 'true'
+      #   run: |
+      #     INSTANCE_ID="i-078f93bc56d3d9cb4"
+          
+      #     echo "Rotating SSH key for EC2 Instance Connect..."
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id "$INSTANCE_ID" \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "file://$HOME/.ssh/gha_eic.pub" || {
+      #         echo "Failed to rotate SSH key"
+      #         exit 1
+      #       }
+          
+      #     sleep 5
+          
+      #     echo "Uploading large directories and files find script..."
+      #     ssh -i "$HOME/.ssh/gha_eic" \
+      #       -o IdentitiesOnly=yes \
+      #       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      #       ec2-user@52.34.96.115 \
+      #       "cat > /tmp/jenkins_analysis.sh && chmod +x /tmp/jenkins_analysis.sh" \
+      #       < jenkins_analysis.sh
+
+      # - name: Run large directories and files find script
+      #   if: steps.dryrun.outputs.disk_cleanup_should_run == 'true'
+      #   run: |
+      #     echo "Finding large directories and files in Jenkins..."
+      #     echo "====================================="
+          
+      #     aws ec2-instance-connect send-ssh-public-key \
+      #       --instance-id i-078f93bc56d3d9cb4 \
+      #       --instance-os-user ec2-user \
+      #       --region us-west-2 \
+      #       --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
+          
+      #     sleep 2
+          
+      #     # Run find script and capture output
+      #      ssh -i "$HOME/.ssh/gha_eic" \
+      #       -o IdentitiesOnly=yes \
+      #       -o StrictHostKeyChecking=no \
+      #       -o UserKnownHostsFile=/dev/null \
+      #       -o ServerAliveInterval=30 \
+      #       -o ServerAliveCountMax=10 \
+      #       -o ConnectTimeout=15 \
+      #       -o TCPKeepAlive=yes \
+      #       ec2-user@52.34.96.115 \
+      #       "yes yes | sudo /tmp/jenkins_analysis.sh" 2>&1 || {
+      #         echo "⚠️ Cleanup script encountered an issue. Checking logs..."
+      #         exit 1
+      #       }
 
       # - name: Upload cleanup dryrun script to EC2
       #   run: |
