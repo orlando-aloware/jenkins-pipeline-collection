@@ -90,15 +90,29 @@ jobs:
           
           usage_pct="$(sed -n 's/^DISK_USAGE_PCT=//p' dryrun.log | tail -n 1)"
           should_run="$(sed -n 's/^DISK_CLEANUP_SHOULD_RUN=//p' dryrun.log | tail -n 1)"
+          candidates_total="$(sed -n 's/^CLEANUP_CANDIDATES_TOTAL=//p' dryrun.log | tail -n 1)"
+          candidates_truncated="$(sed -n 's/^CLEANUP_CANDIDATES_TRUNCATED=//p' dryrun.log | tail -n 1)"
+          candidates_file="$(sed -n 's/^CLEANUP_CANDIDATES_FILE=//p' dryrun.log | tail -n 1)"
+          candidates_list="$(awk '/^CLEANUP_CANDIDATES_BEGIN$/ {flag=1; next} /^CLEANUP_CANDIDATES_END$/ {flag=0} flag {print}' dryrun.log)"
           
           echo "disk_usage_pct=${usage_pct}" >> "$GITHUB_OUTPUT"
           echo "disk_cleanup_should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          echo "cleanup_candidates_total=${candidates_total}" >> "$GITHUB_OUTPUT"
+          echo "cleanup_candidates_truncated=${candidates_truncated}" >> "$GITHUB_OUTPUT"
+          echo "cleanup_candidates_file=${candidates_file}" >> "$GITHUB_OUTPUT"
+          {
+            echo 'cleanup_candidates<<EOF'
+            echo "$candidates_list"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Disk usage decision
         shell: bash
         run: |
           echo "Remote disk usage: ${{ steps.dryrun.outputs.disk_usage_pct }}%"
           echo "Cleanup should run: ${{ steps.dryrun.outputs.disk_cleanup_should_run }}"
+          echo "Cleanup candidates total: ${{ steps.dryrun.outputs.cleanup_candidates_total }}"
+          echo "Cleanup candidates truncated: ${{ steps.dryrun.outputs.cleanup_candidates_truncated }}"
 
       # - name: Upload large directories and files find script
       #   if: steps.dryrun.outputs.disk_cleanup_should_run == 'true'

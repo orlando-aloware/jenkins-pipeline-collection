@@ -44,6 +44,49 @@ log_critical() {
     echo -e "${MAGENTA}[CRITICAL - DO NOT DELETE]${NC} $1"
 }
 
+# Cleanup candidates output helpers (for GitHub Actions parsing)
+init_cleanup_candidates() {
+    : > "$CLEANUP_CANDIDATES_FILE"
+}
+
+emit_cleanup_candidates() {
+    local total emitted truncated
+
+    if [[ -f "$CLEANUP_CANDIDATES_FILE" ]]; then
+        total=$(wc -l < "$CLEANUP_CANDIDATES_FILE" | tr -d ' ')
+    else
+        total="0"
+    fi
+
+    if [[ "${CLEANUP_CANDIDATES_MAX}" -eq 0 ]]; then
+        emitted="$total"
+        truncated="false"
+    else
+        if [[ "$total" -gt "${CLEANUP_CANDIDATES_MAX}" ]]; then
+            truncated="true"
+            emitted="${CLEANUP_CANDIDATES_MAX}"
+        else
+            truncated="false"
+            emitted="$total"
+        fi
+    fi
+
+    echo "CLEANUP_CANDIDATES_TOTAL=${total}"
+    echo "CLEANUP_CANDIDATES_MAX=${CLEANUP_CANDIDATES_MAX}"
+    echo "CLEANUP_CANDIDATES_EMITTED=${emitted}"
+    echo "CLEANUP_CANDIDATES_TRUNCATED=${truncated}"
+    echo "CLEANUP_CANDIDATES_FILE=${CLEANUP_CANDIDATES_FILE}"
+    echo "CLEANUP_CANDIDATES_BEGIN"
+    if [[ -f "$CLEANUP_CANDIDATES_FILE" ]]; then
+        if [[ "${CLEANUP_CANDIDATES_MAX}" -eq 0 ]]; then
+            cat "$CLEANUP_CANDIDATES_FILE"
+        else
+            head -n "${CLEANUP_CANDIDATES_MAX}" "$CLEANUP_CANDIDATES_FILE"
+        fi
+    fi
+    echo "CLEANUP_CANDIDATES_END"
+}
+
 # Function to get disk usage
 get_disk_usage() {
     df -h / | tail -1 | awk '{print $5}'
@@ -85,6 +128,10 @@ TOP_BUILDS_TOTAL_BYTES=0
 TOP_BUILDS_COUNT=0
 OLD_LARGE_TOTAL_BYTES=0
 OLD_LARGE_COUNT=0
+CLEANUP_CANDIDATES_FILE="${CLEANUP_CANDIDATES_FILE:-/tmp/jenkins_cleanup_candidates.txt}"
+CLEANUP_CANDIDATES_MAX="${CLEANUP_CANDIDATES_MAX:-500}"
+
+init_cleanup_candidates
 
 ################################################################################
 # Pre-flight checks
@@ -118,6 +165,7 @@ echo ""
 
 if [[ "${DISK_CLEANUP_SHOULD_RUN}" != "true" ]]; then
     log_success "Disk usage is below threshold; skipping remaining dry-run steps."
+    emit_cleanup_candidates
     exit 0
 fi
 
@@ -235,7 +283,8 @@ else
     ) &
     PROGRESS_PID=$!
     
-    OLD_BUILDS_COUNT=$(find "$JENKINS_JOBS_DIR" -type d -path "*/builds/*" ! -path "*/builds/*/*" -mtime +60 2>/dev/null | wc -l | tr -d ' ')
+    OLD_BUILDS_COUNT=$(find "$JENKINS_JOBS_DIR" -type d -path "*/builds/*" ! -path "*/builds/*/*" -mtime +60 2>/dev/null \
+        | tee -a "$CLEANUP_CANDIDATES_FILE" | wc -l | tr -d ' ')
     
     kill $PROGRESS_PID 2>/dev/null || true
     wait $PROGRESS_PID 2>/dev/null || true
@@ -342,6 +391,7 @@ else
     
     echo ""
     if [[ $OLD_PR_COUNT -gt 0 ]]; then
+        echo "$OLD_PR_DIRS" >> "$CLEANUP_CANDIDATES_FILE"
         echo "  Sample of PR workspaces to be deleted (first 10):"
         echo "$OLD_PR_DIRS" | head -10 | while read -r pr_dir; do
             PR_SIZE=$(get_dir_size "$pr_dir")
@@ -398,6 +448,7 @@ if [[ -f "$GITHUB_CACHE" ]]; then
     log_plan "Will delete this cache file (Jenkins rebuilds automatically)"
     log_plan "Expected savings: ~256MB"
     log_success "Safe to delete - Jenkins regenerates this automatically"
+    echo "$GITHUB_CACHE" >> "$CLEANUP_CANDIDATES_FILE"
 else
     log_success "GitHub SCM probe cache not found or already cleaned"
 fi
@@ -426,6 +477,7 @@ if [[ -f "$JENKINS_ZIP" ]]; then
     if [[ -n "$ZIP_AGE" ]]; then
         log_plan "File is older than 30 days - will prompt for deletion"
         log_plan "Expected savings: $ZIP_SIZE"
+        echo "$JENKINS_ZIP" >> "$CLEANUP_CANDIDATES_FILE"
     else
         log_success "File is recent (< 30 days) - will be kept"
     fi
@@ -479,6 +531,9 @@ echo "Expected final disk usage:  35-45% (down from current ${DISK_USAGE_RAW:-$(
 
 echo ""
 log_success "═══════════════════════════════════════════════════════════════════"
+log_info "Machine-readable cleanup candidates (for automation)"
+emit_cleanup_candidates
+echo ""
 log_success "DRY RUN COMPLETE - NO CHANGES WERE MADE"
 log_success "═══════════════════════════════════════════════════════════════════"
 echo ""
