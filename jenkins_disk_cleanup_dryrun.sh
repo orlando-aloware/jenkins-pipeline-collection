@@ -547,3 +547,27 @@ echo ""
 
 log_warning "IMPORTANT: The cleanup script has built-in protections and will NOT"
 log_warning "delete /var/lib/jenkins/caches or other critical build dependencies"
+
+echo ""
+################################################################################
+# Full cleanup candidates list with size and total (final output)
+################################################################################
+
+log_info "CLEANUP CANDIDATES WITH SIZES (FULL LIST)"
+if [[ -f "$CLEANUP_CANDIDATES_FILE" ]]; then
+    TOTAL_CANDIDATES_BYTES=0
+    while IFS= read -r candidate || [[ -n "$candidate" ]]; do
+        [[ -z "$candidate" ]] && continue
+        if [[ -e "$candidate" ]]; then
+            CANDIDATE_BYTES=$(get_dir_size_bytes "$candidate")
+            CANDIDATE_SIZE=$(format_bytes "$CANDIDATE_BYTES")
+            TOTAL_CANDIDATES_BYTES=$((TOTAL_CANDIDATES_BYTES + CANDIDATE_BYTES))
+        else
+            CANDIDATE_SIZE="MISSING"
+        fi
+        printf "  - %s\t%s\n" "$CANDIDATE_SIZE" "$candidate"
+    done < "$CLEANUP_CANDIDATES_FILE"
+    echo "Total candidates size: $(format_bytes "$TOTAL_CANDIDATES_BYTES")"
+else
+    log_warning "Candidates file not found: $CLEANUP_CANDIDATES_FILE"
+fi

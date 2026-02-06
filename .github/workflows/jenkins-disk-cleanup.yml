@@ -12,9 +12,16 @@ permissions:
   contents: read
 
 jobs:
-  cleanup:
+  dry-run:
     name: Run Jenkins Disk Cleanup
     runs-on: ubuntu-latest
+
+    outputs:
+      disk_usage_pct: ${{ steps.precheck.outputs.disk_usage_pct }}
+      disk_cleanup_should_run: ${{ steps.precheck.outputs.disk_cleanup_should_run }}
+      cleanup_candidates_total: ${{ steps.dryrun.outputs.cleanup_candidates_total }}
+      cleanup_candidates_truncated: ${{ steps.dryrun.outputs.cleanup_candidates_truncated }}
+      candidates_file: ${{ steps.dryrun.outputs.cleanup_candidates_file }}
     
     steps:
       - name: Checkout repository
@@ -62,9 +69,54 @@ jobs:
             "cat > /tmp/jenkins_disk_cleanup_dryrun.sh && chmod +x /tmp/jenkins_disk_cleanup_dryrun.sh" \
             < jenkins_disk_cleanup_dryrun.sh
 
+      - name: Precheck disk usage (before dry-run)
+        id: precheck
+        shell: bash
+        env:
+          DISK_USAGE_THRESHOLD_PCT: 30
+        run: |
+          set -euo pipefail
+          INSTANCE_ID="i-078f93bc56d3d9cb4"
+          
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" \
+            --instance-os-user ec2-user \
+            --region us-west-2 \
+            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
+          
+          sleep 2
+          
+          usage_pct="$(ssh -i "$HOME/.ssh/gha_eic" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -o ConnectTimeout=15 \
+            -o TCPKeepAlive=yes \
+            ec2-user@52.34.96.115 \
+            "df -P / | awk 'NR==2 {gsub(/%/, \"\", \$5); print \$5}'" | tail -n 1 | tr -d ' ')"
+          
+          if [[ -z "$usage_pct" ]]; then
+            usage_pct="0"
+          fi
+          
+          if [[ "$usage_pct" -ge "$DISK_USAGE_THRESHOLD_PCT" ]]; then
+            should_run="true"
+          else
+            should_run="false"
+          fi
+          
+          echo "disk_usage_pct=${usage_pct}" >> "$GITHUB_OUTPUT"
+          echo "disk_cleanup_should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          echo "DISK_USAGE_PCT=${usage_pct}"
+          echo "DISK_USAGE_THRESHOLD_PCT=${DISK_USAGE_THRESHOLD_PCT}"
+          echo "DISK_CLEANUP_SHOULD_RUN=${should_run}"
+
       - name: Run cleanup dryrun script (sets outputs)
         id: dryrun
         shell: bash
+        if: steps.precheck.outputs.disk_cleanup_should_run == 'true'
         run: |
           set -euo pipefail
           INSTANCE_ID="i-078f93bc56d3d9cb4"
@@ -103,16 +155,130 @@ jobs:
           {
             echo 'cleanup_candidates<<EOF'
             echo "$candidates_list"
-            echo 'EOF'
+          echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
       - name: Disk usage decision
         shell: bash
         run: |
-          echo "Remote disk usage: ${{ steps.dryrun.outputs.disk_usage_pct }}%"
-          echo "Cleanup should run: ${{ steps.dryrun.outputs.disk_cleanup_should_run }}"
+          echo "Remote disk usage: ${{ steps.precheck.outputs.disk_usage_pct }}%"
+          echo "Cleanup should run: ${{ steps.precheck.outputs.disk_cleanup_should_run }}"
           echo "Cleanup candidates total: ${{ steps.dryrun.outputs.cleanup_candidates_total }}"
           echo "Cleanup candidates truncated: ${{ steps.dryrun.outputs.cleanup_candidates_truncated }}"
+
+      - name: Build summary (dry-run)
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# Jenkins Disk Cleanup — Dry Run"
+            echo ""
+            echo "## Decision"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---:|"
+            echo "| Disk usage (%) | ${{ steps.dryrun.outputs.disk_usage_pct }} |"
+            echo "| Cleanup should run | ${{ steps.dryrun.outputs.disk_cleanup_should_run }} |"
+            echo "| Candidates total | ${{ steps.dryrun.outputs.cleanup_candidates_total }} |"
+            echo "| Candidates truncated | ${{ steps.dryrun.outputs.cleanup_candidates_truncated }} |"
+            echo "| Candidates file (remote) | \`${{ steps.dryrun.outputs.cleanup_candidates_file }}\` |"
+            echo ""
+
+            echo "## Logs"
+            echo ""
+            echo "- Dry-run log: \`dryrun.log\` (see workflow artifacts if you upload it)"
+            echo ""
+
+            echo "## Candidate preview (from dryrun.log)"
+            echo ""
+            echo "<details><summary>Show candidates (capped)</summary>"
+            echo ""
+            echo '```text'
+            echo "${{ steps.dryrun.outputs.cleanup_candidates }}" | head -200
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    name: Perform Jenkins Disk Cleanup
+    runs-on: ubuntu-latest
+    needs: [dry-run]
+    if: ${{ needs.dry-run.outputs.disk_usage_pct > 30 && needs.dry-run.outputs.disk_cleanup_should_run == 'true'}}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-west-2
+          role-session-name: GitHubActions-JenkinsCleanup
+
+      - name: Generate ephemeral SSH key for EC2 Instance Connect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/gha_eic
+          chmod 600 ~/.ssh/gha_eic
+          ssh-keygen -lf ~/.ssh/gha_eic.pub
+
+      - name: Upload cleanup script
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "${INSTANCE_ID}" \
+            --instance-os-user ec2-user \
+            --region "us-west-2" \
+            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
+
+          sleep 2
+
+          ssh -i "$HOME/.ssh/gha_eic" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "ec2-user@52.34.96.115" \
+            "cat > /tmp/disk_cleanup.sh && chmod +x /tmp/disk_cleanup.sh" \
+            < disk_cleanup.sh
+
+      - name: Run cleanup script (consume candidates file)
+        shell: bash
+        env:
+          CANDIDATES_FILE: ${{ needs.dry-run.outputs.candidates_file }}
+        run: |
+          set -euo pipefail
+          echo "Using candidates file from dry-run: ${CANDIDATES_FILE}"
+
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "${INSTANCE_ID}" \
+            --instance-os-user ec2-user \
+            --region us-west-2 \
+            --ssh-public-key "file://$HOME/.ssh/gha_eic.pub"
+
+          sleep 2
+
+          # Pass as argument AND env (pick whichever your script supports)
+          # ssh -i "$HOME/.ssh/gha_eic" \
+          #   -o IdentitiesOnly=yes \
+          #   -o StrictHostKeyChecking=no \
+          #   -o UserKnownHostsFile=/dev/null \
+          #   -o ServerAliveInterval=30 \
+          #   -o ServerAliveCountMax=10 \
+          #   -o ConnectTimeout=15 \
+          #   -o TCPKeepAlive=yes \
+          #   ec2-user@52.34.96.115" \
+          #   "sudo CANDIDATES_FILE='${CANDIDATES_FILE}' /tmp/disk_cleanup.sh '${CANDIDATES_FILE}'"
+
+
+
+
+
 
       # - name: Upload large directories and files find script
       #   if: steps.dryrun.outputs.disk_cleanup_should_run == 'true'
