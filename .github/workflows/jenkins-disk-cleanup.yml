@@ -146,7 +146,6 @@ jobs:
           candidates_truncated="$(sed -n 's/^CLEANUP_CANDIDATES_TRUNCATED=//p' dryrun.log | tail -n 1)"
           candidates_file="$(sed -n 's/^CLEANUP_CANDIDATES_FILE=//p' dryrun.log | tail -n 1)"
           candidates_list="$(awk '/^CLEANUP_CANDIDATES_BEGIN$/ {flag=1; next} /^CLEANUP_CANDIDATES_END$/ {flag=0} flag {print}' dryrun.log)"
-          candidates_with_size_list="$(awk '/^CLEANUP_CANDIDATES_WITH_SIZE_BEGIN$/ {flag=1; next} /^CLEANUP_CANDIDATES_WITH_SIZE_END$/ {flag=0} flag {print}' dryrun.log)"
           
           echo "disk_usage_pct=${usage_pct}" >> "$GITHUB_OUTPUT"
           echo "disk_cleanup_should_run=${should_run}" >> "$GITHUB_OUTPUT"
@@ -156,9 +155,6 @@ jobs:
           {
             echo 'cleanup_candidates<<EOF'
             echo "$candidates_list"
-            echo 'EOF'
-            echo 'cleanup_candidates_with_size<<EOF'
-            echo "$candidates_with_size_list"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -198,13 +194,17 @@ jobs:
             echo "<details><summary>Show candidates (capped)</summary>"
             echo ""
             echo '```text'
-            echo "${{ steps.dryrun.outputs.cleanup_candidates_with_size }}" \
-              | head -200 \
-              | while IFS=$'\t' read -r bytes candidate_path; do
-                  [[ -z "$candidate_path" ]] && continue
-                  human_size="$(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B")"
-                  printf "%s\t%s\n" "$human_size" "$candidate_path"
-                done
+            if [[ -f dryrun.log ]]; then
+              awk '/^CLEANUP_CANDIDATES_WITH_SIZE_BEGIN$/ {flag=1; next} /^CLEANUP_CANDIDATES_WITH_SIZE_END$/ {flag=0} flag {print}' dryrun.log \
+                | head -200 \
+                | while IFS=$'\t' read -r bytes candidate_path; do
+                    [[ -z "$candidate_path" ]] && continue
+                    human_size="$(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B")"
+                    printf "%s\t%s\n" "$human_size" "$candidate_path"
+                  done
+            else
+              echo "No dryrun.log found (dry-run may have been skipped)."
+            fi
             echo '```'
             echo ""
             echo "</details>"
