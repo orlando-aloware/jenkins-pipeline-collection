@@ -195,8 +195,11 @@ jobs:
             echo ""
             echo '```text'
             if [[ -f dryrun.log ]]; then
-              awk '/^CLEANUP_CANDIDATES_WITH_SIZE_BEGIN$/ {flag=1; next} /^CLEANUP_CANDIDATES_WITH_SIZE_END$/ {flag=0} flag {print}' dryrun.log \
-                | head -200 \
+              awk '
+                /^CLEANUP_CANDIDATES_WITH_SIZE_BEGIN$/ {flag=1; next}
+                /^CLEANUP_CANDIDATES_WITH_SIZE_END$/ {flag=0}
+                flag && shown < 200 {print; shown++}
+              ' dryrun.log \
                 | while IFS=$'\t' read -r bytes candidate_path; do
                     [[ -z "$candidate_path" ]] && continue
                     human_size="$(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B")"
