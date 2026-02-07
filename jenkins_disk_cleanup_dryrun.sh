@@ -553,21 +553,58 @@ echo ""
 # Full cleanup candidates list with size and total (final output)
 ################################################################################
 
-log_info "CLEANUP CANDIDATES WITH SIZES (FULL LIST)"
+TOP_HEAVIEST_CANDIDATES="${TOP_HEAVIEST_CANDIDATES:-50}"
+
+log_info "CLEANUP CANDIDATES WITH SIZES (TOP HEAVIEST)"
 if [[ -f "$CLEANUP_CANDIDATES_FILE" ]]; then
     TOTAL_CANDIDATES_BYTES=0
+    MISSING_CANDIDATES=0
+    CANDIDATE_SIZES_FILE=$(mktemp)
+    declare -A SEEN_CANDIDATES=()
+
     while IFS= read -r candidate || [[ -n "$candidate" ]]; do
         [[ -z "$candidate" ]] && continue
+        candidate="${candidate%$'\r'}"
+
+        if [[ -n "${SEEN_CANDIDATES[$candidate]:-}" ]]; then
+            continue
+        fi
+        SEEN_CANDIDATES["$candidate"]=1
+
         if [[ -e "$candidate" ]]; then
             CANDIDATE_BYTES=$(get_dir_size_bytes "$candidate")
-            CANDIDATE_SIZE=$(format_bytes "$CANDIDATE_BYTES")
             TOTAL_CANDIDATES_BYTES=$((TOTAL_CANDIDATES_BYTES + CANDIDATE_BYTES))
+            printf "%s\t%s\n" "$CANDIDATE_BYTES" "$candidate" >> "$CANDIDATE_SIZES_FILE"
         else
-            CANDIDATE_SIZE="MISSING"
+            MISSING_CANDIDATES=$((MISSING_CANDIDATES + 1))
         fi
-        printf "  - %s\t%s\n" "$CANDIDATE_SIZE" "$candidate"
     done < "$CLEANUP_CANDIDATES_FILE"
+
+    if [[ -s "$CANDIDATE_SIZES_FILE" ]]; then
+        echo "Top ${TOP_HEAVIEST_CANDIDATES} heaviest candidates:"
+        sort -nr "$CANDIDATE_SIZES_FILE" \
+            | head -n "$TOP_HEAVIEST_CANDIDATES" \
+            | while IFS=$'\t' read -r bytes candidate_path; do
+                printf "  - %s\t%s\n" "$(format_bytes "$bytes")" "$candidate_path"
+            done
+    else
+        log_warning "No existing cleanup candidates found to size"
+    fi
+
+    echo "CLEANUP_CANDIDATES_WITH_SIZE_BEGIN"
+    if [[ -s "$CANDIDATE_SIZES_FILE" ]]; then
+        sort -nr "$CANDIDATE_SIZES_FILE"
+    fi
+    echo "CLEANUP_CANDIDATES_WITH_SIZE_END"
+
+    if [[ "$MISSING_CANDIDATES" -gt 0 ]]; then
+        log_warning "Missing candidates skipped from size ranking: $MISSING_CANDIDATES"
+    fi
+
     echo "Total candidates size: $(format_bytes "$TOTAL_CANDIDATES_BYTES")"
+    rm -f "$CANDIDATE_SIZES_FILE"
 else
     log_warning "Candidates file not found: $CLEANUP_CANDIDATES_FILE"
+    echo "CLEANUP_CANDIDATES_WITH_SIZE_BEGIN"
+    echo "CLEANUP_CANDIDATES_WITH_SIZE_END"
 fi
