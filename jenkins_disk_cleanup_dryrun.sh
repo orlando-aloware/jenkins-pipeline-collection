@@ -304,7 +304,7 @@ echo ""
 ################################################################################
 
 # ------------------------------------------------------------------------------
-# Step 1: System journal logs (measure, don't guess)
+# Step 1: System journal logs
 # ------------------------------------------------------------------------------
 log_info "═══════════════════════════════════════════════════════════════════"
 log_info "STEP 1/7: Analyzing system journal logs"
@@ -346,17 +346,11 @@ else
     
     # Count builds older than 60 days
     OLD_BUILDS_COUNT=0
-    OLD_BUILDS_SIZE=0
+    OLD_BUILDS_TOTAL_BYTES=0
+    OLD_BUILDS_REPORT_MAX="${OLD_BUILDS_REPORT_MAX:-200}"
     
     echo ""
     echo "  Analyzing builds older than 60 days..."
-    
-    # Show first 10 samples
-    find "$JENKINS_JOBS_DIR" -type d -path "*/builds/*" ! -path "*/builds/*/*" -mtime +60 2>/dev/null | head -10 | while read -r build_dir; do
-        JOB_NAME=$(echo "$build_dir" | sed 's|/var/lib/jenkins/jobs/||' | sed 's|/builds/.*||')
-        BUILD_NUM=$(basename "$build_dir")
-        echo "    - OLD BUILD (report-only): $JOB_NAME/builds/$BUILD_NUM"
-    done
     
     # Count with progress indicator
     (
@@ -373,17 +367,41 @@ else
         > "$OLD_BUILDS_TMP_FILE" || true
 
     OLD_BUILDS_COUNT=$(wc -l < "$OLD_BUILDS_TMP_FILE" | tr -d ' ')
-    
-    rm -f "$OLD_BUILDS_TMP_FILE"
-    
+
     kill $PROGRESS_PID 2>/dev/null || true
     wait $PROGRESS_PID 2>/dev/null || true
+
     if [[ $OLD_BUILDS_COUNT -gt 0 ]]; then
+        OLD_BUILDS_SIZES_FILE=$(mktemp)
+        while IFS= read -r build_dir || [[ -n "$build_dir" ]]; do
+            [[ -z "$build_dir" ]] && continue
+            build_bytes=$(get_dir_size_bytes "$build_dir")
+            printf "%s\t%s\n" "$build_bytes" "$build_dir" >> "$OLD_BUILDS_SIZES_FILE"
+        done < "$OLD_BUILDS_TMP_FILE"
+
+        OLD_BUILDS_TOTAL_BYTES=$(awk -F'\t' '{s+=$1} END{print s+0}' "$OLD_BUILDS_SIZES_FILE")
+
         log_plan "Found $OLD_BUILDS_COUNT build directories older than 60 days"
-        log_plan "Estimated savings: 20-30GB"
+        log_plan "Total size of old builds: $(format_bytes "$OLD_BUILDS_TOTAL_BYTES")"
+
+        echo "  Old builds older than 60 days (largest first):"
+        sort -nr "$OLD_BUILDS_SIZES_FILE" \
+            | awk -F'\t' -v max="$OLD_BUILDS_REPORT_MAX" 'NR<=max {print $1 "\t" $2}' \
+            | while IFS=$'\t' read -r bytes build_dir; do
+                rel_path="${build_dir#$JENKINS_JOBS_DIR/}"
+                JOB_NAME="${rel_path%/builds/*}"
+                BUILD_NUM=$(basename "$build_dir")
+                printf "    - %s\t%s/builds/%s\n" "$(format_bytes "$bytes")" "$JOB_NAME" "$BUILD_NUM"
+            done
+
+        if [[ "$OLD_BUILDS_COUNT" -gt "$OLD_BUILDS_REPORT_MAX" ]]; then
+            echo "    ... showing top ${OLD_BUILDS_REPORT_MAX} of ${OLD_BUILDS_COUNT} old builds"
+        fi
+        rm -f "$OLD_BUILDS_SIZES_FILE"
     else
         log_success "No builds older than 60 days found"
     fi
+    rm -f "$OLD_BUILDS_TMP_FILE"
     
     # Show what's being kept
     RECENT_BUILDS_COUNT=$(find "$JENKINS_JOBS_DIR" -type d -path "*/builds/*" ! -path "*/builds/*/*" -mtime -60 2>/dev/null | wc -l | tr -d ' ')
