@@ -46,7 +46,16 @@ log_critical() {
 
 # Cleanup candidates output helpers (for GitHub Actions parsing)
 init_cleanup_candidates() {
-    : > "$CLEANUP_CANDIDATES_FILE"
+    local candidates_dir
+    candidates_dir="$(dirname "$CLEANUP_CANDIDATES_FILE")"
+    mkdir -p "$candidates_dir" 2>/dev/null || true
+
+    if ! : > "$CLEANUP_CANDIDATES_FILE" 2>/dev/null; then
+        log_warning "Cannot write to candidates file: $CLEANUP_CANDIDATES_FILE"
+        CLEANUP_CANDIDATES_FILE="$(mktemp /tmp/jenkins_cleanup_candidates.XXXXXX)"
+        log_info "Falling back to writable candidates file: $CLEANUP_CANDIDATES_FILE"
+        : > "$CLEANUP_CANDIDATES_FILE"
+    fi
 }
 
 emit_cleanup_candidates() {
@@ -283,8 +292,15 @@ else
     ) &
     PROGRESS_PID=$!
     
-    OLD_BUILDS_COUNT=$(find "$JENKINS_JOBS_DIR" -type d -path "*/builds/*" ! -path "*/builds/*/*" -mtime +60 2>/dev/null \
-        | tee -a "$CLEANUP_CANDIDATES_FILE" | wc -l | tr -d ' ')
+    OLD_BUILDS_TMP_FILE=$(mktemp)
+    find "$JENKINS_JOBS_DIR" -type d -path "*/builds/*" ! -path "*/builds/*/*" -mtime +60 2>/dev/null \
+        > "$OLD_BUILDS_TMP_FILE" || true
+
+    OLD_BUILDS_COUNT=$(wc -l < "$OLD_BUILDS_TMP_FILE" | tr -d ' ')
+    if [[ -s "$OLD_BUILDS_TMP_FILE" ]]; then
+        cat "$OLD_BUILDS_TMP_FILE" >> "$CLEANUP_CANDIDATES_FILE"
+    fi
+    rm -f "$OLD_BUILDS_TMP_FILE"
     
     kill $PROGRESS_PID 2>/dev/null || true
     wait $PROGRESS_PID 2>/dev/null || true
