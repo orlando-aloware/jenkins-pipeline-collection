@@ -20,12 +20,12 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Function to print colored output
-log_info()      { echo -e "${BLUE}[INFO]${NC} $1" }
-log_success()   { echo -e "${GREEN}[SAFE]${NC} $1" }
-log_warning()   { echo -e "${YELLOW}[WARNING]${NC} $1" }
-log_error()     { echo -e "${RED}[DANGER]${NC} $1" }
-log_plan() { echo -e "${CYAN}[PLAN]${NC} $1" }
-log_critical() { echo -e "${MAGENTA}[CRITICAL - DO NOT DELETE]${NC} $1" }
+log_info()      { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success()   { echo -e "${GREEN}[SAFE]${NC} $1"; }
+log_warning()   { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_error()     { echo -e "${RED}[DANGER]${NC} $1"; }
+log_plan()      { echo -e "${CYAN}[PLAN]${NC} $1"; }
+log_critical()  { echo -e "${MAGENTA}[CRITICAL - DO NOT DELETE]${NC} $1"; }
 
 # Cleanup candidates output helpers (for GitHub Actions parsing)
 init_cleanup_candidates() {
@@ -80,16 +80,16 @@ emit_cleanup_candidates() {
 }
 
 # Function to get disk usage
-get_disk_usage() { df -h / | tail -1 | awk '{print $5}' }
+get_disk_usage() { df -h / | tail -1 | awk '{print $5}'; }
 
 # Function to get disk usage as integer percent (no % sign)
-get_disk_usage_pct() { df -P / | awk 'NR==2 {gsub(/%/, "", $5); print $5}' }
+get_disk_usage_pct() { df -P / | awk 'NR==2 {gsub(/%/, "", $5); print $5}'; }
 
 # Function to calculate directory size
-get_dir_size() { du -sh "$1" 2>/dev/null | cut -f1 || echo "0B" }
+get_dir_size() { du -sh "$1" 2>/dev/null | cut -f1 || echo "0B"; }
 
 # Function to calculate directory size in bytes for comparison
-get_dir_size_bytes() { du -sb "$1" 2>/dev/null | cut -f1 || echo "0" }
+get_dir_size_bytes() { du -sb "$1" 2>/dev/null | cut -f1 || echo "0"; }
 
 add_candidate() {
   # TYPE<TAB>PATH
